@@ -1,2 +1,2 @@
 def test_import():
-    import brkraw_mrs  # noqa: F401
+    import brkraw_mrs  # pyright: ignore[reportMissingImports] # noqa: F401

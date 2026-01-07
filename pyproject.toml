@@ -24,9 +24,6 @@ dependencies = [
 [project.entry-points."brkraw.converter_hook"]
 mrs = "brkraw_mrs.hook:HOOK"
 
-[project.scripts]
-brkraw-mrs-install = "brkraw_mrs.install:main"
-
 [tool.setuptools]
 package-dir = {"" = "src"}
 packages = ["brkraw_mrs"]
