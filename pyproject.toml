@@ -48,3 +48,12 @@ include = [
 
 [tool.hatch.build.targets.editable]
 packages = ["src/brkraw_mrs"]
+include = [
+  "src/brkraw_mrs/brkraw_hook.yaml",
+  "src/brkraw_mrs/rules/*.yaml",
+  "src/brkraw_mrs/specs/*.yaml",
+  "src/brkraw_mrs/transforms/*.py",
+  "src/brkraw_mrs/docs/*.md",
+  "LICENSE",
+  "NOTICE",
+]
