@@ -1,3 +1,5 @@
+# Notice
+
 This project ports the Bruker MRS conversion workflow from spec2nii into
 the BrkRaw hook system.
 

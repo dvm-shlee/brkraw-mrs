@@ -56,6 +56,10 @@ brkraw convert \
   --sidecar
 ```
 
+## Contributing
+
+This project has not been tested extensively yet. Contributions for validation and improvements are very welcome.
+
 ## Attribution and License
 
 This hook is a port of the spec2nii Bruker MRS workflow. See `NOTICE` for
