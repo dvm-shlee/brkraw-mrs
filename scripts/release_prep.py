@@ -53,6 +53,24 @@ def update_readme_version(version: str) -> None:
     README_PATH.write_text(new_text, encoding="utf-8")
 
 
+def update_pyproject_version(version: str) -> bool:
+    if not PYPROJECT_PATH.exists():
+        return False
+    text = PYPROJECT_PATH.read_text(encoding="utf-8")
+    new_text, count = re.subn(
+        r"^version\s*=\s*['\"][^'\"]+['\"]\s*$",
+        f'version = "{version}"',
+        text,
+        flags=re.MULTILINE,
+    )
+    if count == 0:
+        return False
+    if count != 1:
+        raise RuntimeError("Failed to update version in pyproject.toml")
+    PYPROJECT_PATH.write_text(new_text, encoding="utf-8")
+    return True
+
+
 def update_pyproject_classifiers(status_label: str) -> bool:
     if not PYPROJECT_PATH.exists():
         return False
@@ -139,6 +157,7 @@ def main() -> None:
     status_classifier, status_label, _is_stable = determine_status(args.version)
     update_init_version(args.version)
     update_readme_version(args.version)
+    update_pyproject_version(args.version)
     update_pyproject_classifiers(status_classifier)
     generate_release_notes(args.version)
 

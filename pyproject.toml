@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.27.0"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "brkraw-mrs"
-dynamic = ["version"]
+version = "0.1.2"
 description = "BrkRaw converter hook for Bruker PRESS SVS NIfTI-MRS outputs (ported from spec2nii)"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -27,33 +27,16 @@ mrs = "brkraw_mrs.hook:HOOK"
 [project.scripts]
 brkraw-mrs-install = "brkraw_mrs.install:main"
 
-[tool.hatch.version]
-path = "src/brkraw_mrs/__init__.py"
-style = "pep440"
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["brkraw_mrs"]
+include-package-data = true
 
-[tool.hatch.build]
-sources = ["src"]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/brkraw_mrs"]
-include = [
-  "src/brkraw_mrs/brkraw_hook.yaml",
-  "src/brkraw_mrs/rules/*.yaml",
-  "src/brkraw_mrs/specs/*.yaml",
-  "src/brkraw_mrs/transforms/*.py",
-  "src/brkraw_mrs/docs/*.md",
-  "LICENSE",
-  "NOTICE",
-]
-
-[tool.hatch.build.targets.editable]
-packages = ["src/brkraw_mrs"]
-include = [
-  "src/brkraw_mrs/brkraw_hook.yaml",
-  "src/brkraw_mrs/rules/*.yaml",
-  "src/brkraw_mrs/specs/*.yaml",
-  "src/brkraw_mrs/transforms/*.py",
-  "src/brkraw_mrs/docs/*.md",
-  "LICENSE",
-  "NOTICE",
+[tool.setuptools.package-data]
+brkraw_mrs = [
+  "brkraw_hook.yaml",
+  "docs/*.md",
+  "rules/*.yaml",
+  "specs/*.yaml",
+  "transforms/*.py",
 ]
