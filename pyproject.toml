@@ -45,3 +45,6 @@ include = [
   "LICENSE",
   "NOTICE",
 ]
+
+[tool.hatch.build.targets.editable]
+packages = ["brkraw_mrs"]
