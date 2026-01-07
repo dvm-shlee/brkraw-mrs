@@ -51,7 +51,7 @@ brkraw-mrs-install
 
 ```bash
 brkraw convert \
-  --path /path/to/bruker/PV_dataset \
+  /path/to/bruker/PV_dataset \
   --output /path/to/output \
   --sidecar
 ```
