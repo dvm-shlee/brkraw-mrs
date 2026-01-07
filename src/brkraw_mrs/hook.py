@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from types import MethodType
 from typing import Any, Dict, Optional, Tuple
+from importlib import resources
 
 import numpy as np
 import nibabel as nib
@@ -13,28 +15,9 @@ from nifti_mrs.create_nmrs import nifti_mrs_version
 
 from brkraw.resolver import datatype as datatype_resolver
 
-from . import __version__
+from .transforms.mrs import strip_bruker_string, first
 
 logger = logging.getLogger("brkraw-mrs")
-
-
-def _strip_bruker_string(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if text.startswith("<") and text.endswith(">"):
-        text = text[1:-1]
-    return text.strip()
-
-
-def _first_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, (list, tuple)) and value:
-        return value[0]
-    if isinstance(value, np.ndarray) and value.size:
-        return value.flat[0]
-    return value
 
 
 def _select_raw_file(scan: Any):
@@ -74,7 +57,7 @@ def _resolve_dtype(scan: Any) -> np.dtype:
         return np.dtype(dtype_info["dtype"])
 
     acqp = getattr(scan, "acqp", None)
-    byte_order = _strip_bruker_string(acqp.get("BYTORDA") if acqp else None)
+    byte_order = strip_bruker_string(acqp.get("BYTORDA") if acqp else None)
     go_format = acqp.get("GO_raw_data_format") if acqp else None
     word_size = acqp.get("ACQ_word_size") if acqp else None
 
@@ -97,13 +80,13 @@ def _resolve_dtype(scan: Any) -> np.dtype:
 
 
 def _points_prior_to_echo(method: Any, acqp: Any) -> int:
-    dig_shift = _first_value(getattr(method, "PVM_DigShift", None) if method else None)
+    dig_shift = first(getattr(method, "PVM_DigShift", None) if method else None)
     if dig_shift is not None:
         try:
             return int(dig_shift)
         except Exception:
             pass
-    sw_version = _strip_bruker_string(getattr(acqp, "ACQ_sw_version", None) if acqp else None) or ""
+    sw_version = strip_bruker_string(getattr(acqp, "ACQ_sw_version", None) if acqp else None) or ""
     if "360.1.1" not in sw_version:
         return 0
     rx_filter = getattr(acqp, "ACQ_RxFilterInfo", None) if acqp else None
@@ -124,13 +107,13 @@ def _points_prior_to_echo(method: Any, acqp: Any) -> int:
 
 def _infer_points(method: Any, acqp: Any) -> Tuple[int, list]:
     candidates = []
-    spec_matrix = _first_value(getattr(method, "PVM_SpecMatrix", None) if method else None)
+    spec_matrix = first(getattr(method, "PVM_SpecMatrix", None) if method else None)
     if spec_matrix:
         try:
             candidates.append(int(spec_matrix))
         except Exception:
             pass
-    acq_size = _first_value(getattr(acqp, "ACQ_size", None) if acqp else None)
+    acq_size = first(getattr(acqp, "ACQ_size", None) if acqp else None)
     if acq_size:
         try:
             acq_size = int(acq_size)
@@ -243,37 +226,73 @@ def _reshape_with_hypotheses(data: np.ndarray, dims: Dict[str, int]) -> Tuple[np
 def _metadata_from_scan(scan: Any) -> Dict[str, Any]:
     metadata = {}
     try:
-        metadata = scan.get_metadata() or {}
+        spec_path = resources.files("brkraw_mrs.specs").joinpath("metadata_spec.yaml")
+        with resources.as_file(spec_path) as spec_file:
+            metadata = scan.get_metadata(spec=spec_file) or {}
     except Exception as exc:
         logger.warning("Failed to resolve metadata spec: %s", exc)
         metadata = {}
 
-    source_dataset = getattr(getattr(scan, "fs", None), "root", None)
-    if source_dataset:
-        metadata["SourceDataset"] = str(source_dataset)
-
-    scan_id = getattr(scan, "scan_id", None)
-    if scan_id is not None:
-        metadata["ScanIdentifier"] = str(scan_id)
-
-    metadata["ConversionSoftware"] = "brkraw-mrs"
-    metadata["ConversionSoftwareVersion"] = __version__
+    if "ConversionTime" not in metadata:
+        metadata["ConversionTime"] = datetime.now().isoformat(sep="T", timespec="milliseconds")
 
     return metadata
 
 
+def _cache_metadata(scan: Any, metadata: Dict[str, Any], reco_id: Optional[int]) -> None:
+    cache = getattr(scan, "_mrs_metadata_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+    cache_key = reco_id if reco_id is not None else "_default"
+    cache[cache_key] = metadata
+    scan._mrs_metadata_cache = cache
+
+    if getattr(scan, "_mrs_metadata_wrapped", False):
+        return
+
+    original_get_metadata = scan.get_metadata
+    scan._mrs_metadata_original = original_get_metadata
+
+    def _get_metadata_cached(
+        self,
+        reco_id: Optional[int] = None,
+        spec: Optional[Any] = None,
+        context_map: Optional[Any] = None,
+        return_spec: bool = False,
+    ):
+        cache = getattr(self, "_mrs_metadata_cache", None)
+        cache_key = reco_id if reco_id is not None else "_default"
+        if (
+            spec is None
+            and context_map is None
+            and not return_spec
+            and isinstance(cache, dict)
+            and cache_key in cache
+        ):
+            return cache[cache_key]
+        return original_get_metadata(
+            reco_id=reco_id,
+            spec=spec,
+            context_map=context_map,
+            return_spec=return_spec,
+        )
+
+    scan.get_metadata = MethodType(_get_metadata_cached, scan)
+    scan._mrs_metadata_wrapped = True
+
+
 def _build_hdr_ext(metadata: Dict[str, Any]) -> Tuple[Hdr_Ext, float]:
     nucleus = metadata.get("ResonantNucleus")
-    if not nucleus:
-        nucleus = ["1H"]
     if isinstance(nucleus, str):
         nucleus = [nucleus]
+    if not nucleus:
+        raise ValueError("ResonantNucleus missing in metadata (metadata_spec required).")
 
     freq = metadata.get("SpectrometerFrequency")
     if isinstance(freq, (int, float)):
         freq = [float(freq)]
     if not freq:
-        freq = [0.0]
+        raise ValueError("SpectrometerFrequency missing in metadata (metadata_spec required).")
 
     hdr_ext = Hdr_Ext(freq, nucleus)
 
@@ -287,12 +306,17 @@ def _build_hdr_ext(metadata: Dict[str, Any]) -> Tuple[Hdr_Ext, float]:
     if sw is not None:
         hdr_ext.set_standard_def("SpectralWidth", float(sw))
 
-    hdr_ext.set_standard_def("ConversionMethod", f"brkraw-mrs v{__version__}")
-    hdr_ext.set_standard_def(
-        "ConversionTime",
-        datetime.now().isoformat(sep="T", timespec="milliseconds"),
-    )
-    hdr_ext.set_standard_def("Manufacturer", "Bruker")
+    if metadata.get("ConversionMethod") is not None:
+        hdr_ext.set_standard_def("ConversionMethod", metadata["ConversionMethod"])
+    if metadata.get("ConversionTime") is not None:
+        hdr_ext.set_standard_def("ConversionTime", metadata["ConversionTime"])
+    else:
+        hdr_ext.set_standard_def(
+            "ConversionTime",
+            datetime.now().isoformat(sep="T", timespec="milliseconds"),
+        )
+    if metadata.get("Manufacturer") is not None:
+        hdr_ext.set_standard_def("Manufacturer", metadata["Manufacturer"])
     if metadata.get("SoftwareVersions") is not None:
         hdr_ext.set_standard_def("SoftwareVersions", metadata["SoftwareVersions"])
     if metadata.get("SequenceName") is not None:
@@ -303,14 +327,19 @@ def _build_hdr_ext(metadata: Dict[str, Any]) -> Tuple[Hdr_Ext, float]:
         hdr_ext.set_standard_def("TxOffset", float(metadata["TxOffset"]))
     if metadata.get("OriginalFile") is not None:
         hdr_ext.set_standard_def("OriginalFile", metadata["OriginalFile"])
-    hdr_ext.set_standard_def("kSpace", [False, False, False])
+    if metadata.get("kSpace") is not None:
+        hdr_ext.set_standard_def("kSpace", metadata["kSpace"])
 
-    hdr_ext.set_user_def("ConversionSoftware", "brkraw-mrs", "Conversion software name")
-    hdr_ext.set_user_def(
-        "ConversionSoftwareVersion",
-        __version__,
-        "Conversion software version",
-    )
+    conversion_software = metadata.get("ConversionSoftware")
+    if conversion_software is not None:
+        hdr_ext.set_user_def("ConversionSoftware", conversion_software, "Conversion software name")
+    conversion_version = metadata.get("ConversionSoftwareVersion")
+    if conversion_version is not None:
+        hdr_ext.set_user_def(
+            "ConversionSoftwareVersion",
+            conversion_version,
+            "Conversion software version",
+        )
     if "SourceDataset" in metadata:
         hdr_ext.set_user_def(
             "SourceDataset",
@@ -325,13 +354,8 @@ def _build_hdr_ext(metadata: Dict[str, Any]) -> Tuple[Hdr_Ext, float]:
         )
 
     dwell = metadata.get("DwellTime")
-    if dwell is None and sw:
-        try:
-            dwell = 1.0 / float(sw)
-        except Exception:
-            dwell = None
     if dwell is None:
-        dwell = 0.0
+        raise ValueError("DwellTime missing in metadata (metadata_spec required).")
     return hdr_ext, float(dwell)
 
 
@@ -348,7 +372,7 @@ def _apply_dim_tags(hdr_ext: Hdr_Ext, dim_names: Tuple[str, ...]) -> None:
 
 def get_dataobj(self, reco_id: Optional[int] = None):
     _ = reco_id
-    return _load_press_data(self)[0]
+    return _load_mrs_data(self)[0]
 
 
 def get_affine(self, reco_id: Optional[int] = None, *, decimals: Optional[int] = None):
@@ -360,7 +384,8 @@ def get_affine(self, reco_id: Optional[int] = None, *, decimals: Optional[int] =
 def convert(self, reco_id: Optional[int] = None, **kwargs):
     _ = reco_id
     _ = kwargs
-    data, dim_order, metadata = _load_press_data(self)
+    data, dim_order, metadata = _load_mrs_data(self)
+    _cache_metadata(self, metadata, reco_id)
 
     hdr_ext, dwell = _build_hdr_ext(metadata)
     _apply_dim_tags(hdr_ext, dim_order)
@@ -383,15 +408,20 @@ def convert(self, reco_id: Optional[int] = None, **kwargs):
     return img
 
 
-def _load_press_data(scan: Any) -> Tuple[np.ndarray, Tuple[str, ...], Dict[str, Any]]:
+def _load_mrs_data(scan: Any) -> Tuple[np.ndarray, Tuple[str, ...], Dict[str, Any]]:
     method = getattr(scan, "method", None)
     acqp = getattr(scan, "acqp", None)
 
     method_name = getattr(method, "Method", None) if method else None
-    method_text = _strip_bruker_string(method_name) or ""
-    if "PRESS" not in method_text.upper():
-        logger.warning("Skipping scan %s: method does not look like PRESS (%s)", getattr(scan, "scan_id", "?"), method_text)
-        raise ValueError("Not a PRESS SVS scan.")
+    method_text = strip_bruker_string(method_name) or ""
+    upper_method = method_text.upper()
+    if not any(name in upper_method for name in ("PRESS", "STEAM", "SLASER")):
+        logger.warning(
+            "Skipping scan %s: method does not look like MRS (PRESS/STEAM/SLASER) (%s)",
+            getattr(scan, "scan_id", "?"),
+            method_text,
+        )
+        raise ValueError("Not a supported single-voxel MRS scan.")
 
     file_name, file_obj = _select_raw_file(scan)
     if file_obj is None:
@@ -414,9 +444,9 @@ def _load_press_data(scan: Any) -> Tuple[np.ndarray, Tuple[str, ...], Dict[str, 
     complex_data = real.astype(np.float32, copy=False) + 1j * imag.astype(np.float32, copy=False)
 
     points_default, points_candidates = _infer_points(method, acqp)
-    averages = _first_value(getattr(method, "PVM_NAverages", None) if method else None)
-    dynamics = _first_value(getattr(method, "PVM_NRepetitions", None) if method else None)
-    coils = _first_value(getattr(method, "PVM_EncNReceivers", None) if method else None)
+    averages = first(getattr(method, "PVM_NAverages", None) if method else None)
+    dynamics = first(getattr(method, "PVM_NRepetitions", None) if method else None)
+    coils = first(getattr(method, "PVM_EncNReceivers", None) if method else None)
 
     dims = _infer_dims(
         total_complex=complex_data.size,
@@ -456,40 +486,6 @@ def _load_press_data(scan: Any) -> Tuple[np.ndarray, Tuple[str, ...], Dict[str, 
     data = np.expand_dims(data, axis=0)
 
     metadata = _metadata_from_scan(scan)
-    software = getattr(acqp, "ACQ_sw_version", None) if acqp else None
-    if software is not None:
-        metadata["SoftwareVersions"] = str(software)
-    seq_name = (getattr(method, "Method", None) if method else None) or (getattr(method, "PULPROG", None) if method else None)
-    if seq_name is not None:
-        metadata["SequenceName"] = _strip_bruker_string(seq_name)
-    tx_offset = _first_value(getattr(method, "PVM_FrqWorkOffsetPpm", None) if method else None)
-    if tx_offset is not None:
-        try:
-            metadata["TxOffset"] = float(tx_offset)
-        except Exception:
-            pass
-    source_dataset = metadata.get("SourceDataset")
-    if source_dataset is not None:
-        metadata["OriginalFile"] = [str(source_dataset)]
-    if "SpectrometerFrequency" not in metadata:
-        freq = getattr(acqp, "BF1", None) if acqp else None
-        if freq is not None:
-            metadata["SpectrometerFrequency"] = [float(_first_value(freq))]
-    if "ResonantNucleus" not in metadata:
-        nucleus = _strip_bruker_string(getattr(acqp, "NUCLEUS", None) if acqp else None)
-        if nucleus:
-            metadata["ResonantNucleus"] = [nucleus]
-
-    if "SpectralWidth" not in metadata:
-        sw = getattr(method, "PVM_SpecSWH", None) if method else None
-        if sw is not None:
-            metadata["SpectralWidth"] = float(_first_value(sw))
-
-    if "DwellTime" not in metadata:
-        sw = metadata.get("SpectralWidth")
-        if sw:
-            metadata["DwellTime"] = 1.0 / float(sw)
-
     for key in ["ResonantNucleus", "SpectrometerFrequency", "SpectralWidth", "DwellTime", "EchoTime", "RepetitionTime"]:
         if key not in metadata or metadata[key] in (None, ""):
             logger.warning("Missing metadata key: %s", key)

@@ -1,0 +1,50 @@
+info_spec:
+  - name: "mrs-info"
+    description: "Info spec for PRESS/STEAM/SLASER single-voxel MRS scans."
+    when:
+      method:
+        sources:
+          - file: method
+            key: Method
+    if:
+      any:
+        - regex: ["$method", "(?i)PRESS"]
+        - regex: ["$method", "(?i)STEAM"]
+        - regex: ["$method", "(?i)SLASER"]
+    use: "specs/info_spec.yaml"
+
+metadata_spec:
+  - name: "mrs_metadata"
+    description: "NIfTI-MRS metadata mapping for Bruker single-voxel MRS."
+    when:
+      method:
+        sources:
+          - file: method
+            key: Method
+      encspec:
+        sources:
+          - file: method
+            key: PVM_EncSpectroscopy
+    if:
+      all:
+        - regex: ["$method", "(?i)PRESS|STEAM|SLASER"]
+        - eq: ["$encspec", "Yes"]
+    use: "specs/metadata_spec.yaml"
+
+converter_hook:
+  - name: "mrs"
+    description: "Single-voxel MRS conversion hook for NIfTI-MRS."
+    when:
+      method:
+        sources:
+          - file: method
+            key: Method
+      encspec:
+        sources:
+          - file: method
+            key: PVM_EncSpectroscopy
+    if:
+      all:
+        - regex: ["$method", "(?i)PRESS|STEAM|SLASER"]
+        - eq: ["$encspec", "Yes"]
+    use: "mrs"

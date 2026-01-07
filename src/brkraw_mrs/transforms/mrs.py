@@ -1,9 +1,10 @@
-"""Transform helpers for brkraw-mrs metadata mapping."""
+"""Transform helpers for brkraw-mrs metadata and info mapping."""
 
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+import re
+from typing import Any, Optional, cast
 from importlib import metadata
 
 
@@ -16,6 +17,16 @@ def strip_bruker_string(value: Any) -> Any:
     return text.strip()
 
 
+def strip_jcamp_string(value: Optional[str]) -> str:
+    if value is None:
+        return "Unknown"
+    text = str(value).strip()
+    if text.startswith("<") and text.endswith(">"):
+        text = text[1:-1]
+    text = re.sub(r"\^+", " ", text)
+    return " ".join(text.split())
+
+
 def ensure_list(value: Any) -> Optional[list]:
     if value is None:
         return None
@@ -24,7 +35,17 @@ def ensure_list(value: Any) -> Optional[list]:
     return [value]
 
 
-def _first(value: Any) -> Any:
+def convert_to_list(value: Any):
+    if value is None:
+        return []
+    if hasattr(value, "tolist"):
+        return cast(Any, value).tolist()
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def first(value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, (list, tuple)) and value:
@@ -39,7 +60,7 @@ def _first(value: Any) -> Any:
 
 
 def first_float(value: Any) -> Optional[float]:
-    val = _first(value)
+    val = first(value)
     if val is None:
         return None
     try:
@@ -88,6 +109,16 @@ def plugin_version(*, value: Any) -> str:
         return metadata.version("brkraw-mrs")
     except Exception:
         return "unknown"
+
+
+def conversion_method(*, package: Any = None, name: Any = None) -> str:
+    pkg = str(package or name or "brkraw-mrs")
+    base = str(name or pkg)
+    try:
+        version = metadata.version(pkg)
+    except Exception:
+        version = None
+    return f"{base} v{version}" if version else base
 
 
 def source_dataset_env(*, value: Any) -> Optional[str]:

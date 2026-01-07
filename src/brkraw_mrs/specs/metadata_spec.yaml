@@ -1,9 +1,9 @@
 __meta__:
-  name: "metadata_press_svs"
+  name: "mrs_metadata"
   version: "0.1.0"
-  description: "NIfTI-MRS metadata mapping for Bruker PRESS SVS scans."
+  description: "NIfTI-MRS metadata mapping for Bruker single-voxel MRS scans."
   category: "metadata_spec"
-  transforms_source: "../transforms/metadata_transforms.py"
+  transforms_source: "../transforms/mrs.py"
 
 ResonantNucleus:
   sources:
@@ -59,6 +59,26 @@ RepetitionTime:
       key: PVM_RepetitionTime
   transform: ms_to_s
 
+SoftwareVersions:
+  sources:
+    - file: acqp
+      key: ACQ_sw_version
+  transform: strip_bruker_string
+
+SequenceName:
+  sources:
+    - file: method
+      key: Method
+    - file: method
+      key: PULPROG
+  transform: strip_bruker_string
+
+TxOffset:
+  sources:
+    - file: method
+      key: PVM_FrqWorkOffsetPpm
+  transform: first_float
+
 ConversionSoftware:
   inputs:
     value:
@@ -70,6 +90,26 @@ ConversionSoftwareVersion:
     value:
       const: "brkraw-mrs"
   transform: plugin_version
+
+ConversionMethod:
+  inputs:
+    package:
+      const: "brkraw-mrs"
+    name:
+      const: "brkraw-mrs"
+  transform: conversion_method
+
+Manufacturer:
+  inputs:
+    value:
+      const: "Bruker"
+  transform: value_only
+
+kSpace:
+  inputs:
+    value:
+      const: [false, false, false]
+  transform: value_only
 
 SourceDataset:
   inputs:

@@ -1,7 +1,8 @@
 docs: docs/hook.md
 specs:
-  - specs/metadata_press_svs.yaml
+  - specs/info_spec.yaml
+  - specs/metadata_spec.yaml
 rules:
-  - rules/press_svs.yaml
+  - rules/mrs.yaml
 transforms:
-  - transforms/metadata_transforms.py
+  - transforms/mrs.py
