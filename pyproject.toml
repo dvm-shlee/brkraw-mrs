@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "brkraw-mrs"
+dynamic = ["version"]
+description = "BrkRaw converter hook for Bruker PRESS SVS NIfTI-MRS outputs (ported from spec2nii)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+  {name = "BrkRaw contributors"}
+]
+dependencies = [
+  "brkraw",
+  "numpy",
+  "nibabel",
+  "nifti-mrs",
+  "pyyaml",
+  "jsonschema"
+]
+
+[project.entry-points."brkraw.converter_hook"]
+mrs = "brkraw_mrs.hook:HOOK"
+
+[project.scripts]
+brkraw-mrs-install = "brkraw_mrs.install:main"
+
+[tool.hatch.version]
+path = "src/brkraw_mrs/__init__.py"
+style = "pep440"
+
+[tool.hatch.build]
+sources = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["brkraw_mrs"]
+include = [
+  "src/brkraw_mrs/brkraw_hook.yaml",
+  "src/brkraw_mrs/rules/*.yaml",
+  "src/brkraw_mrs/specs/*.yaml",
+  "src/brkraw_mrs/transforms/*.py",
+  "src/brkraw_mrs/docs/*.md",
+  "LICENSE",
+  "NOTICE",
+]

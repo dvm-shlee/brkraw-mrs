@@ -1,0 +1,35 @@
+metadata_spec:
+  - name: "metadata-press-svs"
+    description: "NIfTI-MRS metadata mapping for Bruker PRESS SVS."
+    when:
+      method:
+        sources:
+          - file: method
+            key: Method
+      encspec:
+        sources:
+          - file: method
+            key: PVM_EncSpectroscopy
+    if:
+      all:
+        - regex: ["$method", "(?i)PRESS"]
+        - eq: ["$encspec", "Yes"]
+    use: "specs/metadata_press_svs.yaml"
+
+converter_hook:
+  - name: "mrs"
+    description: "PRESS SVS conversion hook for NIfTI-MRS."
+    when:
+      method:
+        sources:
+          - file: method
+            key: Method
+      encspec:
+        sources:
+          - file: method
+            key: PVM_EncSpectroscopy
+    if:
+      all:
+        - regex: ["$method", "(?i)PRESS"]
+        - eq: ["$encspec", "Yes"]
+    use: "mrs"

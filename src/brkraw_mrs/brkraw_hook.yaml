@@ -1,0 +1,7 @@
+docs: docs/hook.md
+specs:
+  - specs/metadata_press_svs.yaml
+rules:
+  - rules/press_svs.yaml
+transforms:
+  - transforms/metadata_transforms.py

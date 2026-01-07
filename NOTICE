@@ -1,0 +1,7 @@
+This project ports the Bruker MRS conversion workflow from spec2nii into
+the BrkRaw hook system.
+
+Upstream project:
+  spec2nii - https://github.com/wtclarke/spec2nii
+
+The original project and its contributors retain their respective copyrights.
