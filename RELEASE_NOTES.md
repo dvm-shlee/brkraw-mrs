@@ -1,7 +1,8 @@
-# Release v0.1.2
+# Release v0.2.0
 
 Date: 2026-01-07
-Changes since 0.1.0
+Changes since 0.1.2
 
-- Update README and build metadata for 0.1.1 (c3757d0)
-- release note (e132e11)
+- Update docs and community templates (2c66ec3)
+- Remove legacy install entrypoint (2fcb4f7)
+- Refactor MRS specs and hook (cf9fe62)
