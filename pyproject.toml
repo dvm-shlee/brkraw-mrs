@@ -14,15 +14,20 @@ authors = [
 ]
 dependencies = [
   "brkraw",
+  "matplotlib",
   "numpy",
   "nibabel",
   "nifti-mrs",
+  "pillow",
   "pyyaml",
   "jsonschema"
 ]
 
 [project.entry-points."brkraw.converter_hook"]
 mrs = "brkraw_mrs.hook:HOOK"
+
+[project.entry-points."brkraw.viewer.hook"]
+mrs = "brkraw_mrs.viewer_hook:MRSViewerHook"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

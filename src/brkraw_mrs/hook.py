@@ -429,11 +429,11 @@ def _load_mrs_data(scan: Any) -> Tuple[np.ndarray, Tuple[str, ...], Dict[str, An
         raise FileNotFoundError("No fid/rawdata file found.")
 
     raw = _read_bytes(file_obj)
-    logger.info("Using raw file: %s", file_name)
-    logger.info("Raw file size (bytes): %s", len(raw))
+    logger.debug("Using raw file: %s", file_name)
+    logger.debug("Raw file size (bytes): %s", len(raw))
 
     dtype = _resolve_dtype(scan)
-    logger.info("Resolved dtype: %s", dtype)
+    logger.debug("Resolved dtype: %s", dtype)
 
     data = np.frombuffer(raw, dtype=dtype)
     if data.size % 2 != 0:
@@ -457,7 +457,7 @@ def _load_mrs_data(scan: Any) -> Tuple[np.ndarray, Tuple[str, ...], Dict[str, An
     )
 
     expected = dims["points"] * dims["averages"] * dims["dynamics"] * dims["coils"]
-    logger.info(
+    logger.debug(
         "Derived dims points=%s averages=%s dynamics=%s coils=%s (expected samples=%s)",
         dims["points"],
         dims["averages"],
@@ -465,19 +465,19 @@ def _load_mrs_data(scan: Any) -> Tuple[np.ndarray, Tuple[str, ...], Dict[str, An
         dims["coils"],
         expected,
     )
-    logger.info("Actual complex sample count=%s", complex_data.size)
+    logger.debug("Actual complex sample count=%s", complex_data.size)
     expected_bytes = complex_data.size * 2 * dtype.itemsize
-    logger.info("Expected raw byte size=%s (dtype=%s)", expected_bytes, dtype)
+    logger.debug("Expected raw byte size=%s (dtype=%s)", expected_bytes, dtype)
 
     reshaped, order = _reshape_with_hypotheses(complex_data, dims)
-    logger.info("Reshape order: %s", order)
+    logger.debug("Reshape order: %s", order)
 
     points_shift = _points_prior_to_echo(method, acqp)
     if points_shift:
         if points_shift >= reshaped.shape[0]:
             raise ValueError("points_prior_to_echo exceeds available points.")
         reshaped = reshaped[points_shift:, ...]
-        logger.info("Removed points prior to echo: %s", points_shift)
+        logger.debug("Removed points prior to echo: %s", points_shift)
 
     reshaped = reshaped.conj()
 

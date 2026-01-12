@@ -79,6 +79,18 @@ TxOffset:
       key: PVM_FrqWorkOffsetPpm
   transform: first_float
 
+VoxelPosition:
+  sources:
+    - file: method
+      key: PVM_VoxArrPosition
+  transform: to_float_list
+
+VoxelSize:
+  sources:
+    - file: method
+      key: PVM_VoxArrSize
+  transform: to_float_list
+
 ConversionSoftware:
   inputs:
     value:
