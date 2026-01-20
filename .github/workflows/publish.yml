@@ -61,36 +61,7 @@ jobs:
         env:
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          python -c 'code = """import os
-          import sys
-          import re
-          import tomllib
-          from pathlib import Path
-          from packaging.version import parse
-
-          tag = os.environ["TAG"]
-          print(f"Target Tag: {tag}")
-
-          pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-          version = pyproject.get("project", {}).get("version")
-          if not version:
-              version_path = pyproject.get("tool", {}).get("hatch", {}).get("version", {}).get("path")
-              if not version_path:
-                  raise SystemExit("No version in pyproject.toml and no hatch version path found.")
-              text = Path(version_path).read_text(encoding="utf-8")
-              match = re.search(r"__version__\\s*=\\s*[\"\\x27]([^\"]+)[\"\\x27]", text)
-              if not match:
-                  raise SystemExit(f"No __version__ found in {version_path}")
-              version = match.group(1)
-
-          print(f"Detected Package Version: {version}")
-
-          # Normalize versions and compare (handles v-prefix and alpha/beta notations)
-          if parse(tag) != parse(version):
-              raise SystemExit(f"Tag {tag} does not match package version {version}.")
-
-          print("Version check passed!")
-          \"\"\"; exec(code)'
+          python scripts/verify_tag_version.py
       - name: Build dist
         if: ${{ steps.tag.outputs.prerelease != 'true' }}
         run: python -m build
