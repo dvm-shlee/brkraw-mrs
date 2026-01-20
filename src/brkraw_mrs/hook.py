@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from types import MethodType
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 from importlib import resources
 
 import numpy as np
@@ -370,9 +370,40 @@ def _apply_dim_tags(hdr_ext: Hdr_Ext, dim_names: Tuple[str, ...]) -> None:
         hdr_ext.set_dim_info(idx, tag)
 
 
+def _cache_dim_order(scan: Any, dim_order: Tuple[str, ...], reco_id: Optional[int]) -> None:
+    cache = getattr(scan, "_mrs_dim_order_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+    cache_key = reco_id if reco_id is not None else "_default"
+    cache[cache_key] = dim_order
+    scan._mrs_dim_order_cache = cache
+
+
+def _resolve_cached_dim_order(scan: Any, reco_id: Optional[int]) -> Optional[Tuple[str, ...]]:
+    cache = getattr(scan, "_mrs_dim_order_cache", None)
+    if not isinstance(cache, dict):
+        return None
+    cache_key = reco_id if reco_id is not None else "_default"
+    dim_order = cache.get(cache_key)
+    return dim_order if isinstance(dim_order, tuple) else None
+
+
+def _unwrap_single(value: Any, label: str) -> Any:
+    if isinstance(value, tuple):
+        if not value:
+            raise ValueError(f"Missing {label} for MRS convert.")
+        if len(value) > 1:
+            logger.warning("MRS convert received multiple %s entries; using the first.", label)
+        return cast(Any, value[0])
+    return value
+
+
 def get_dataobj(self, reco_id: Optional[int] = None):
-    _ = reco_id
-    return _load_mrs_data(self)[0]
+    data, dim_order, metadata = _load_mrs_data(self)
+    _cache_metadata(self, metadata, reco_id)
+    _cache_dim_order(self, dim_order, reco_id)
+    self._mrs_last_reco_id = reco_id
+    return data
 
 
 def get_affine(self, reco_id: Optional[int] = None, *, decimals: Optional[int] = None):
@@ -381,16 +412,27 @@ def get_affine(self, reco_id: Optional[int] = None, *, decimals: Optional[int] =
     return np.eye(4, dtype=float)
 
 
-def convert(self, reco_id: Optional[int] = None, **kwargs):
-    _ = reco_id
+def convert(self, dataobj, affine, **kwargs):
     _ = kwargs
-    data, dim_order, metadata = _load_mrs_data(self)
-    _cache_metadata(self, metadata, reco_id)
+    reco_id = getattr(self, "_mrs_last_reco_id", None)
+    dim_order = _resolve_cached_dim_order(self, reco_id)
+    if dim_order is None:
+        logger.warning("MRS dim order cache missing; reloading MRS data.")
+        _, dim_order, metadata = _load_mrs_data(self)
+        _cache_metadata(self, metadata, reco_id)
+        _cache_dim_order(self, dim_order, reco_id)
+    else:
+        metadata = self.get_metadata(reco_id=reco_id)
+        if metadata is None:
+            metadata = _metadata_from_scan(self)
+            _cache_metadata(self, metadata, reco_id)
+
+    data = _unwrap_single(dataobj, "dataobj")
+    affine = _unwrap_single(affine, "affine")
 
     hdr_ext, dwell = _build_hdr_ext(metadata)
     _apply_dim_tags(hdr_ext, dim_order)
 
-    affine = np.eye(4, dtype=float)
     img = nib.nifti2.Nifti2Image(data, affine)
     header = img.header
 

@@ -16,9 +16,7 @@ dependencies = [
   "brkraw",
   "numpy",
   "nibabel",
-  "nifti-mrs",
-  "pyyaml",
-  "jsonschema"
+  "nifti-mrs"
 ]
 
 [project.entry-points."brkraw.converter_hook"]
