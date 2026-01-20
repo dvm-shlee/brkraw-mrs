@@ -390,7 +390,7 @@ def _resolve_cached_dim_order(scan: Any, reco_id: Optional[int]) -> Optional[Tup
 
 def _unwrap_single(value: Any, label: str) -> Any:
     if isinstance(value, tuple):
-        if not value:
+        if not value or len(value) == 0:
             raise ValueError(f"Missing {label} for MRS convert.")
         if len(value) > 1:
             logger.warning("MRS convert received multiple %s entries; using the first.", label)
