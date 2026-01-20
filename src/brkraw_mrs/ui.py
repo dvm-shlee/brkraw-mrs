@@ -8,26 +8,12 @@ import numpy as np
 import tkinter as tk
 from tkinter import ttk
 
-import nibabel as nib
-
 from .hook import _load_mrs_data
 
 logger = logging.getLogger("brkraw.mrs")
 
-try:
-    from PIL import Image, ImageTk
-    HAS_PIL = True
-except Exception:
-    HAS_PIL = False
-
-try:
-    import matplotlib
-    matplotlib.use("Agg")
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-    HAS_MPL = True
-except Exception:
-    HAS_MPL = False
+MAX_PLOT_POINTS = 2048
+MAX_PLOT_TRACES = 16
 
 
 class MRSPanel(ttk.Frame):
@@ -39,39 +25,34 @@ class MRSPanel(ttk.Frame):
         self._mrs_meta: Dict[str, Any] = {}
 
         self._status_var = tk.StringVar(value="")
-        self._underlay_var = tk.StringVar(value="Underlay: none")
-
         self._lb_var = tk.DoubleVar(value=0.0)
         self._phase_var = tk.DoubleVar(value=0.0)
         self._shift_var = tk.DoubleVar(value=0.0)
+        self._lb_min_var = tk.DoubleVar(value=0.0)
+        self._lb_max_var = tk.DoubleVar(value=10.0)
+        self._phase_min_var = tk.DoubleVar(value=-180.0)
+        self._phase_max_var = tk.DoubleVar(value=180.0)
+        self._shift_min_var = tk.DoubleVar(value=-20.0)
+        self._shift_max_var = tk.DoubleVar(value=20.0)
+
+        self._plot_domain_var = tk.StringVar(value="Spectrum")
+        self._x_unit_var = tk.StringVar(value="ppm")
+        self._standard_mrs_var = tk.BooleanVar(value=True)
+        self._spectrum_view_var = tk.StringVar(value="Real")
+        self._fid_view_var = tk.StringVar(value="Real")
+        self._normalize_var = tk.BooleanVar(value=False)
 
         self._avg_dim_vars: Dict[str, tk.BooleanVar] = {}
         self._avg_dim_frame: Optional[ttk.Frame] = None
 
-        self._spec_canvas: Optional[Any] = None
-        self._spec_figure: Optional[Any] = None
-        self._spec_axes: Optional[Any] = None
-        self._spec_toolbar: Optional[Any] = None
+        self._spec_canvas: Optional[tk.Canvas] = None
         self._last_message: Optional[str] = None
         self._plot_refresh_after: Optional[str] = None
-
-        self._underlay_canvas: Optional[tk.Canvas] = None
-        self._underlay_image: Optional[Any] = None
-        self._underlay_plane_var = tk.StringVar(value="xy")
-        self._underlay_slice_var = tk.IntVar(value=0)
-        self._underlay_slice_label = tk.StringVar(value="Slice: -")
-        self._underlay_slice_scale: Optional[tk.Scale] = None
-        self._underlay_data: Optional[np.ndarray] = None
-        self._underlay_affine: Optional[np.ndarray] = None
-        self._underlay_affine_scanner: Optional[np.ndarray] = None
-        self._underlay_res: Optional[np.ndarray] = None
-        self._underlay_res_scanner: Optional[np.ndarray] = None
-        self._underlay_box: Optional[Tuple[np.ndarray, np.ndarray]] = None
-        self._underlay_refresh_after: Optional[str] = None
-        self._underlay_scan_id: Optional[int] = None
-        self._underlay_reco_id: Optional[int] = None
-        self._last_scan_id: Optional[int] = None
-        self._underlay_space_label = "scanner"
+        self._plot_domain_combo: Optional[ttk.Combobox] = None
+        self._x_axis_combo: Optional[ttk.Combobox] = None
+        self._spectrum_view_combo: Optional[ttk.Combobox] = None
+        self._fid_view_combo: Optional[ttk.Combobox] = None
+        self._standard_plot_check: Optional[ttk.Checkbutton] = None
 
         self._tooltips: list[_ToolTip] = []
 
@@ -88,7 +69,6 @@ class MRSPanel(ttk.Frame):
         body = ttk.Frame(self)
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
-        body.columnconfigure(1, weight=0, minsize=320)
         body.rowconfigure(0, weight=1)
 
         spectrum = ttk.Frame(body)
@@ -97,101 +77,132 @@ class MRSPanel(ttk.Frame):
         spectrum.rowconfigure(0, weight=1)
 
         controls_row = 1
-        if HAS_MPL:
-            self._spec_figure = Figure(figsize=(4, 3), dpi=100)
-            self._spec_figure.set_constrained_layout(False)
-            self._spec_axes = self._spec_figure.add_subplot(111)
-            self._spec_axes.set_facecolor("#101010")
-            self._spec_figure.patch.set_facecolor("#101010")
-            self._spec_canvas = FigureCanvasTkAgg(self._spec_figure, master=spectrum)
-            self._spec_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
-            self._spec_canvas.get_tk_widget().configure(background="#101010")
-            self._spec_canvas.get_tk_widget().bind("<Configure>", self._on_canvas_resize)
-            toolbar_frame = ttk.Frame(spectrum)
-            toolbar_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
-            self._spec_toolbar = NavigationToolbar2Tk(self._spec_canvas, toolbar_frame)
-            self._spec_toolbar.update()
-            controls_row = 2
-        else:
-            self._spec_canvas = tk.Canvas(spectrum, background="#101010", highlightthickness=0)
-            self._spec_canvas.grid(row=0, column=0, sticky="nsew")
-            self._spec_canvas.bind("<Configure>", self._on_canvas_resize)
+        self._spec_canvas = tk.Canvas(spectrum, background="#101010", highlightthickness=0)
+        self._spec_canvas.grid(row=0, column=0, sticky="nsew")
+        self._spec_canvas.bind("<Configure>", self._on_canvas_resize)
 
         controls = ttk.Frame(spectrum)
         controls.grid(row=controls_row, column=0, sticky="ew", pady=(6, 0))
         controls.columnconfigure(1, weight=1)
-        ttk.Label(controls, text="Spectrum preprocessing").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(controls, text="Plot & preprocessing").grid(row=0, column=0, columnspan=2, sticky="w")
 
         self._avg_dim_frame = ttk.Frame(controls)
         self._avg_dim_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
 
-        ttk.Label(controls, text="Line broadening (Hz)").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        lb_entry = ttk.Entry(controls, textvariable=self._lb_var)
-        lb_entry.grid(row=2, column=1, sticky="ew", pady=(6, 0))
-        self._add_tooltip(lb_entry, "Apply exponential line broadening in time domain (Hz).")
+        plot_opts = ttk.Frame(controls)
+        plot_opts.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        plot_opts.columnconfigure(1, weight=1)
+        plot_opts.columnconfigure(3, weight=1)
 
-        ttk.Label(controls, text="Phase0 (deg)").grid(row=3, column=0, sticky="w", pady=(6, 0))
-        phase_entry = ttk.Entry(controls, textvariable=self._phase_var)
-        phase_entry.grid(row=3, column=1, sticky="ew", pady=(6, 0))
-        self._add_tooltip(phase_entry, "Zero-order phase correction in degrees.")
-
-        ttk.Label(controls, text="Freq shift (Hz)").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        shift_entry = ttk.Entry(controls, textvariable=self._shift_var)
-        shift_entry.grid(row=4, column=1, sticky="ew", pady=(6, 0))
-        self._add_tooltip(shift_entry, "Frequency shift applied to the spectrum (Hz).")
-
-        ttk.Button(controls, text="Apply", command=self._schedule_plot_refresh).grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0)
-        )
-
-        underlay = ttk.Frame(body, width=320)
-        underlay.grid(row=0, column=1, sticky="nsew")
-        underlay.grid_propagate(False)
-        underlay.columnconfigure(0, weight=1)
-        underlay.rowconfigure(1, weight=1)
-
-        underlay_top = ttk.Frame(underlay)
-        underlay_top.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Label(underlay_top, text="Plane").pack(side=tk.LEFT, padx=(0, 6))
-        plane_combo = ttk.Combobox(
-            underlay_top,
+        ttk.Label(plot_opts, text="View").grid(row=0, column=0, sticky="w")
+        domain_combo = ttk.Combobox(
+            plot_opts,
             state="readonly",
-            values=["xy", "xz", "yz"],
-            width=6,
-            textvariable=self._underlay_plane_var,
+            values=["Spectrum", "FID"],
+            width=10,
+            textvariable=self._plot_domain_var,
         )
-        plane_combo.pack(side=tk.LEFT)
-        plane_combo.bind("<<ComboboxSelected>>", self._on_plane_change)
-        self._add_tooltip(plane_combo, "Plane orientation for the underlay view.")
-        ttk.Label(underlay_top, textvariable=self._underlay_slice_label).pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Button(underlay_top, text="Select underlay…", command=self._open_underlay_selector).pack(
-            side=tk.RIGHT
-        )
-        ttk.Label(underlay_top, textvariable=self._underlay_var).pack(side=tk.RIGHT, padx=(0, 10))
+        domain_combo.grid(row=0, column=1, sticky="ew", padx=(6, 10))
+        self._plot_domain_combo = domain_combo
+        self._add_tooltip(domain_combo, "Choose to plot frequency-domain spectrum or time-domain FID.")
+        domain_combo.bind("<<ComboboxSelected>>", lambda _e: self._sync_plot_controls())
 
-        self._underlay_canvas = tk.Canvas(underlay, background="#0f0f0f", highlightthickness=0, width=300, height=300)
-        self._underlay_canvas.grid(row=1, column=0, sticky="nsew")
-        self._underlay_canvas.bind("<Configure>", self._on_underlay_resize)
-
-        slice_scale = tk.Scale(
-            underlay,
-            from_=0,
-            to=0,
-            orient=tk.HORIZONTAL,
-            showvalue=True,
-            command=lambda _v: self._schedule_underlay_refresh(),
-            length=180,
+        ttk.Label(plot_opts, text="X-axis").grid(row=0, column=2, sticky="w")
+        x_combo = ttk.Combobox(
+            plot_opts,
+            state="readonly",
+            values=["Hz", "ppm"],
+            width=8,
+            textvariable=self._x_unit_var,
         )
-        slice_scale.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        slice_scale.configure(variable=self._underlay_slice_var)
-        self._underlay_slice_scale = slice_scale
-        self._add_tooltip(slice_scale, "Slice index for the selected plane.")
+        x_combo.grid(row=0, column=3, sticky="ew", padx=(6, 0))
+        self._x_axis_combo = x_combo
+        self._add_tooltip(x_combo, "Frequency axis unit for spectrum plots.")
+        x_combo.bind("<<ComboboxSelected>>", lambda _e: self._sync_plot_controls())
+
+        view_opts = ttk.Frame(controls)
+        view_opts.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        view_opts.columnconfigure(1, weight=1)
+        view_opts.columnconfigure(3, weight=1)
+
+        standard_check = ttk.Checkbutton(
+            view_opts,
+            text="X: ppm (reversed)",
+            variable=self._standard_mrs_var,
+            command=self._sync_plot_controls,
+        )
+        standard_check.grid(row=0, column=0, columnspan=2, sticky="w")
+        self._standard_plot_check = standard_check
+        ttk.Checkbutton(
+            view_opts,
+            text="Y: normalize (max=1)",
+            variable=self._normalize_var,
+            command=self._schedule_plot_refresh,
+        ).grid(row=0, column=2, columnspan=2, sticky="w")
+
+        ttk.Label(view_opts, text="Spectrum").grid(row=1, column=0, sticky="w")
+        spec_combo = ttk.Combobox(
+            view_opts,
+            state="readonly",
+            values=["Real", "Magnitude"],
+            width=10,
+            textvariable=self._spectrum_view_var,
+        )
+        spec_combo.grid(row=1, column=1, sticky="ew", padx=(6, 10))
+        self._spectrum_view_combo = spec_combo
+        self._add_tooltip(spec_combo, "Choose real or magnitude spectrum.")
+        spec_combo.bind("<<ComboboxSelected>>", lambda _e: self._schedule_plot_refresh())
+
+        ttk.Label(view_opts, text="FID").grid(row=1, column=2, sticky="w")
+        fid_combo = ttk.Combobox(
+            view_opts,
+            state="readonly",
+            values=["Real", "Magnitude"],
+            width=10,
+            textvariable=self._fid_view_var,
+        )
+        fid_combo.grid(row=1, column=3, sticky="ew", padx=(6, 0))
+        self._fid_view_combo = fid_combo
+        self._add_tooltip(fid_combo, "Choose real or magnitude FID.")
+        fid_combo.bind("<<ComboboxSelected>>", lambda _e: self._schedule_plot_refresh())
+
+        self._sync_plot_controls()
+
+        self._add_range_control(
+            controls,
+            row=4,
+            label="Line broadening (Hz)",
+            value_var=self._lb_var,
+            min_var=self._lb_min_var,
+            max_var=self._lb_max_var,
+            tooltip="Apply exponential line broadening in time domain (Hz).",
+        )
+        self._add_range_control(
+            controls,
+            row=5,
+            label="Phase0 (deg)",
+            value_var=self._phase_var,
+            min_var=self._phase_min_var,
+            max_var=self._phase_max_var,
+            tooltip="Zero-order phase correction in degrees.",
+        )
+        self._add_range_control(
+            controls,
+            row=6,
+            label="Freq shift (Hz)",
+            value_var=self._shift_var,
+            min_var=self._shift_min_var,
+            max_var=self._shift_max_var,
+            tooltip="Frequency shift applied to the spectrum (Hz).",
+        )
+
+        actions = ttk.Frame(controls)
+        actions.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        actions.columnconfigure(0, weight=1)
+        ttk.Button(actions, text="Reset", command=self._reset_controls).grid(row=0, column=0, sticky="e")
 
         status = ttk.Label(self, textvariable=self._status_var, anchor="w")
         status.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-
-    def get_voxel_info(self) -> tuple[Optional[Any], Optional[Any]]:
-        return self._mrs_meta.get("VoxelPosition"), self._mrs_meta.get("VoxelSize")
 
     def refresh_from_viewer(self) -> None:
         scan = getattr(self._app, "_scan", None)
@@ -199,7 +210,6 @@ class MRSPanel(ttk.Frame):
             self._mrs_data = None
             self._mrs_order = None
             self._mrs_meta = {}
-            self._clear_underlay()
             self._show_message("No scan selected.")
             return
         try:
@@ -215,7 +225,6 @@ class MRSPanel(ttk.Frame):
         self._mrs_meta = metadata
         self._refresh_avg_dim_controls()
         self._schedule_plot_refresh()
-        self._sync_underlay_with_viewer(scan)
 
     def _refresh_plot(self) -> None:
         self._plot_refresh_after = None
@@ -226,9 +235,45 @@ class MRSPanel(ttk.Frame):
         if fid is None or dwell is None:
             self._show_message("Failed to process FID.")
             return
-        spectra, freq = self._build_spectra(fid, dwell)
-        self._plot_spectrum(spectra, freq)
+        plot_domain = (self._plot_domain_var.get() or "Spectrum").lower()
         status = f"Points: {fid.shape[0]}  Dwell: {dwell:.6f}s"
+        status_extra = self._build_status_meta()
+        if status_extra:
+            status += f"  {status_extra}"
+
+        if plot_domain == "fid":
+            series, time_axis = self._build_fid_series(fid, dwell)
+            mode = (self._fid_view_var.get() or "Real").lower()
+            series = self._select_component(series, mode)
+            x_label = "Time (ms)"
+            title = f"FID ({mode.title()})"
+            self._plot_lines(
+                time_axis * 1000.0,
+                series,
+                x_label=x_label,
+                y_label="Normalized signal" if self._normalize_var.get() else "Signal",
+                title=title,
+                invert_x=False,
+                normalize=bool(self._normalize_var.get()),
+            )
+        else:
+            spectra, freq = self._build_spectra(fid, dwell)
+            mode = (self._spectrum_view_var.get() or "Real").lower()
+            spectra = self._select_component(spectra, mode)
+            standard = bool(self._standard_mrs_var.get())
+            x_axis, x_label, invert, note = self._resolve_spectrum_axis(freq, standard=standard)
+            if note:
+                status += f"  {note}"
+            title = f"Spectrum ({mode.title()})"
+            self._plot_lines(
+                x_axis,
+                spectra,
+                x_label=x_label,
+                y_label="Normalized signal" if self._normalize_var.get() else "Amplitude",
+                title=title,
+                invert_x=invert,
+                normalize=bool(self._normalize_var.get()),
+            )
         voxel_pos = self._format_vector(self._mrs_meta.get("VoxelPosition"))
         voxel_size = self._format_vector(self._mrs_meta.get("VoxelSize"))
         if voxel_pos:
@@ -254,18 +299,22 @@ class MRSPanel(ttk.Frame):
                 data = data.mean(axis=axis, keepdims=True)
         fid = data
 
-        dwell = float(self._mrs_meta.get("DwellTime") or 0.0) or None
-        if dwell is None:
+        if fid.ndim == 0:
+            return None, None
+        fid = np.atleast_1d(fid)
+
+        dwell = float(self._mrs_meta.get("DwellTime") or 0.0)
+        if dwell == 0.0:
             dwell = 1.0
 
-        t = np.arange(fid.shape[0]) * dwell
-        lb = float(self._lb_var.get() or 0.0)
+        t = np.arange(int(fid.shape[0])) * dwell
+        lb = self._safe_var_float(self._lb_var, 0.0)
         if lb:
             fid = fid * np.exp(-lb * np.pi * t)
-        phase = np.deg2rad(float(self._phase_var.get() or 0.0))
+        phase = np.deg2rad(self._safe_var_float(self._phase_var, 0.0))
         if phase:
             fid = fid * np.exp(1j * phase)
-        shift = float(self._shift_var.get() or 0.0)
+        shift = self._safe_var_float(self._shift_var, 0.0)
         if shift:
             fid = fid * np.exp(1j * 2 * np.pi * shift * t)
 
@@ -277,32 +326,264 @@ class MRSPanel(ttk.Frame):
             spectra = [np.fft.fftshift(np.fft.fft(data))]
         else:
             spectra = []
-            for idx in product(*[range(dim) for dim in data.shape[1:]]):
+            dims = tuple(int(dim) for dim in data.shape[1:])
+            for idx in product(*[range(dim) for dim in dims]):
                 series = data[(slice(None),) + idx]
                 spectra.append(np.fft.fftshift(np.fft.fft(series)))
         freq = np.fft.fftshift(np.fft.fftfreq(data.shape[0], d=dwell))
         return spectra, freq
 
-    def _plot_spectrum(self, spectra: list[np.ndarray], freq: np.ndarray) -> None:
-        if HAS_MPL and self._spec_axes is not None and self._spec_canvas is not None:
-            self._spec_axes.clear()
-            self._spec_axes.set_facecolor("#101010")
-            if self._spec_figure is not None:
-                self._spec_figure.patch.set_facecolor("#101010")
-            self._spec_axes.tick_params(colors="#cccccc", labelsize=8)
-            for spectrum in spectra:
-                self._spec_axes.plot(freq, spectrum.real, linewidth=0.8, alpha=0.6, color="#66ccff")
-            self._spec_axes.set_xlabel("Frequency (Hz)", color="#cccccc", labelpad=6)
-            self._spec_axes.set_ylabel("Amplitude", color="#cccccc", labelpad=6)
-            self._spec_axes.grid(False)
-            self._spec_axes.set_position([0.08, 0.22, 0.9, 0.72])
-            self._spec_figure.subplots_adjust(left=0.08, right=0.98, top=0.94, bottom=0.22)
-            try:
-                self._spec_canvas.draw()
-            except Exception:
-                self._spec_canvas.draw_idle()
+    def _build_fid_series(self, fid: np.ndarray, dwell: float) -> Tuple[list[np.ndarray], np.ndarray]:
+        data = np.asarray(fid)
+        if data.ndim == 1:
+            series = [data]
+        else:
+            series = []
+            dims = tuple(int(dim) for dim in data.shape[1:])
+            for idx in product(*[range(dim) for dim in dims]):
+                trace = data[(slice(None),) + idx]
+                series.append(trace)
+        time_axis = np.arange(data.shape[0]) * dwell
+        return series, time_axis
+
+    def _plot_lines(
+        self,
+        x_axis: np.ndarray,
+        series_list: list[np.ndarray],
+        *,
+        x_label: str,
+        y_label: str,
+        title: str,
+        invert_x: bool,
+        normalize: bool,
+    ) -> None:
+        canvas = self._spec_canvas
+        if canvas is None:
             return
-        self._render_message("Install matplotlib to view spectrum.")
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 1)
+        height = max(canvas.winfo_height(), 1)
+        if x_axis.size == 0 or not series_list:
+            self._render_message("No plot data.")
+            return
+
+        if len(series_list) > MAX_PLOT_TRACES:
+            idx = np.linspace(0, len(series_list) - 1, MAX_PLOT_TRACES, dtype=int)
+            series_list = [series_list[i] for i in idx]
+
+        processed_series: list[np.ndarray] = []
+        max_abs = 0.0
+        for series in series_list:
+            arr = np.asarray(series, dtype=float)
+            if arr.size == 0:
+                continue
+            if normalize:
+                denom = float(np.nanmax(np.abs(arr))) if np.isfinite(arr).any() else 0.0
+                if denom > 0:
+                    arr = arr / denom
+            processed_series.append(arr)
+            try:
+                max_abs = max(max_abs, float(np.nanmax(np.abs(arr))))
+            except Exception:
+                pass
+        if not processed_series:
+            self._render_message("No plot data.")
+            return
+
+        scale_exp = 0
+        scale_factor = 1.0
+        scale_label: Optional[str] = None
+        if not normalize and max_abs > 0.0:
+            scale_exp = int(np.floor(np.log10(max_abs)))
+            if abs(scale_exp) >= 3:
+                scale_factor = 10.0 ** scale_exp
+                scale_label = f"x1e{scale_exp}"
+        if scale_factor != 1.0:
+            processed_series = [arr / scale_factor for arr in processed_series]
+
+        x_min = float(np.nanmin(x_axis))
+        x_max = float(np.nanmax(x_axis))
+        if np.isclose(x_min, x_max):
+            x_max = x_min + 1.0
+        y_min = float("inf")
+        y_max = float("-inf")
+        for series in processed_series:
+            if series.size == 0:
+                continue
+            y_min = min(y_min, float(np.nanmin(series)))
+            y_max = max(y_max, float(np.nanmax(series)))
+        if not np.isfinite(y_min) or not np.isfinite(y_max):
+            self._render_message("No plot data.")
+            return
+        if np.isclose(y_min, y_max):
+            y_max = y_min + 1.0
+
+        pad_left = 78
+        pad_right = 24
+        pad_top = 38
+        pad_bottom = 64
+        plot_w = width - pad_left - pad_right
+        plot_h = height - pad_top - pad_bottom
+        if plot_w <= 10 or plot_h <= 10:
+            return
+
+        x0 = pad_left
+        y0 = pad_top
+        x1 = pad_left + plot_w
+        y1 = pad_top + plot_h
+        canvas.create_rectangle(x0, y0, x1, y1, outline="#2f2f2f", fill="#101010")
+
+        scale_x = plot_w / (x_max - x_min)
+        scale_y = plot_h / (y_max - y_min)
+
+        def _to_canvas(x_val: float, y_val: float) -> tuple[float, float]:
+            if invert_x:
+                x_pos = x0 + (x_max - x_val) * scale_x
+            else:
+                x_pos = x0 + (x_val - x_min) * scale_x
+            return x_pos, y0 + (y_max - y_val) * scale_y
+
+        ticks = 4
+        tick_label_y = y1 + 8
+        for i in range(ticks + 1):
+            tx = x0 + i * plot_w / ticks
+            if invert_x:
+                x_val = x_max - i * (x_max - x_min) / ticks
+            else:
+                x_val = x_min + i * (x_max - x_min) / ticks
+            canvas.create_line(tx, y1, tx, y1 + 4, fill="#777777")
+            canvas.create_text(tx, tick_label_y, text=self._format_tick(x_val), anchor="n", fill="#cccccc")
+        for i in range(ticks + 1):
+            ty = y0 + i * plot_h / ticks
+            y_val = y_max - i * (y_max - y_min) / ticks
+            canvas.create_line(x0 - 4, ty, x0, ty, fill="#777777")
+            canvas.create_text(x0 - 6, ty, text=self._format_tick(y_val), anchor="e", fill="#cccccc")
+
+        if y_min < 0 < y_max:
+            _, zero_y = _to_canvas(x_min, 0.0)
+            canvas.create_line(x0, zero_y, x1, zero_y, fill="#444444")
+
+        max_points = min(max(int(plot_w * 2), 32), MAX_PLOT_POINTS)
+        if x_axis.size > max_points:
+            step = max(1, int(np.ceil(x_axis.size / max_points)))
+            idx = slice(0, None, step)
+            x_plot = x_axis[idx]
+        else:
+            x_plot = x_axis
+            idx = slice(None)
+
+        for series in processed_series:
+            if series.size == 0:
+                continue
+            series = series[idx]
+            coords: list[float] = []
+            for xv, yv in zip(x_plot, series):
+                cx, cy = _to_canvas(float(xv), float(yv))
+                coords.extend([cx, cy])
+            if len(coords) >= 4:
+                canvas.create_line(coords, fill="#66ccff", width=1)
+
+        title_y = max(10, y0 - 18)
+        x_label_y = min(height - 10, y1 + 26)
+        canvas.create_text((x0 + x1) / 2, title_y, text=title, fill="#dddddd")
+        canvas.create_text((x0 + x1) / 2, x_label_y, text=x_label, fill="#cccccc")
+        canvas.create_text(12, y0 + 4, text=y_label, anchor="nw", fill="#cccccc")
+        if scale_label:
+            canvas.create_text(x0 - 6, y0 - 12, text=scale_label, anchor="w", fill="#999999")
+
+    def _select_component(self, series_list: list[np.ndarray], mode: str) -> list[np.ndarray]:
+        if mode.startswith("mag"):
+            return [np.abs(series) for series in series_list]
+        return [np.real(series) for series in series_list]
+
+    def _resolve_spectrum_axis(
+        self,
+        freq_hz: np.ndarray,
+        *,
+        standard: bool,
+    ) -> Tuple[np.ndarray, str, bool, Optional[str]]:
+        use_ppm = self._x_unit_var.get() == "ppm"
+        if use_ppm:
+            sf_mhz = self._get_meta_float("SpectrometerFrequency")
+            if sf_mhz is None or sf_mhz == 0.0:
+                return freq_hz, "Hz", False, "ppm axis unavailable (missing spectrometer frequency)."
+            ref_ppm = self._get_meta_float("TxOffset") or 0.0
+            ppm = freq_hz / (sf_mhz * 1e6) + ref_ppm
+            return ppm, "ppm", standard, None
+        return freq_hz, "Hz", standard, None
+
+    def _build_status_meta(self) -> str:
+        parts: list[str] = []
+        sf = self._get_meta_float("SpectrometerFrequency")
+        if sf is not None:
+            parts.append(f"SF: {sf:.3f} MHz")
+        sw = self._get_meta_float("SpectralWidth")
+        if sw is not None:
+            parts.append(f"SW: {sw:.1f} Hz")
+        nucleus = self._mrs_meta.get("ResonantNucleus")
+        if isinstance(nucleus, (list, tuple)) and nucleus:
+            parts.append(f"Nucleus: {nucleus[0]}")
+        elif isinstance(nucleus, str):
+            parts.append(f"Nucleus: {nucleus}")
+        return "  ".join(parts)
+
+    def _get_meta_float(self, key: str) -> Optional[float]:
+        value = self._mrs_meta.get(key)
+        if isinstance(value, np.ndarray):
+            if value.shape == ():
+                value = value.item()
+            elif value.size:
+                value = value.flat[0]
+            else:
+                return None
+        elif isinstance(value, (list, tuple)):
+            if not value:
+                return None
+            value = value[0]
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+    def _sync_plot_controls(self) -> None:
+        domain = (self._plot_domain_var.get() or "Spectrum").lower()
+        x_is_ppm = self._x_unit_var.get() == "ppm"
+        if self._x_axis_combo is not None:
+            self._x_axis_combo.configure(state="readonly" if domain == "spectrum" else "disabled")
+        if self._standard_plot_check is not None:
+            if domain != "spectrum":
+                self._standard_plot_check.configure(state="disabled")
+                self._standard_mrs_var.set(False)
+            elif x_is_ppm:
+                self._standard_plot_check.configure(state="normal")
+            else:
+                self._standard_plot_check.configure(state="disabled")
+                self._standard_mrs_var.set(False)
+        if self._spectrum_view_combo is not None:
+            self._spectrum_view_combo.configure(state="readonly" if domain == "spectrum" else "disabled")
+        if self._fid_view_combo is not None:
+            self._fid_view_combo.configure(state="readonly" if domain == "fid" else "disabled")
+        self._schedule_plot_refresh()
+
+    def _reset_controls(self) -> None:
+        self._lb_var.set(0.0)
+        self._phase_var.set(0.0)
+        self._shift_var.set(0.0)
+        self._lb_min_var.set(0.0)
+        self._lb_max_var.set(10.0)
+        self._phase_min_var.set(-180.0)
+        self._phase_max_var.set(180.0)
+        self._shift_min_var.set(-20.0)
+        self._shift_max_var.set(20.0)
+        self._plot_domain_var.set("Spectrum")
+        self._x_unit_var.set("ppm")
+        self._standard_mrs_var.set(True)
+        self._spectrum_view_var.set("Real")
+        self._fid_view_var.set("Real")
+        self._normalize_var.set(False)
+        self._sync_plot_controls()
 
     def _format_vector(self, value: Any) -> Optional[str]:
         if value is None:
@@ -324,23 +605,7 @@ class MRSPanel(ttk.Frame):
         self._render_message(message)
 
     def _render_message(self, message: str) -> None:
-        if HAS_MPL and self._spec_axes is not None and self._spec_canvas is not None:
-            self._spec_axes.clear()
-            self._spec_axes.set_facecolor("#101010")
-            self._spec_axes.text(
-                0.5,
-                0.5,
-                message,
-                color="#ff4444",
-                ha="center",
-                va="center",
-                transform=self._spec_axes.transAxes,
-            )
-            self._spec_axes.set_xticks([])
-            self._spec_axes.set_yticks([])
-            self._spec_canvas.draw_idle()
-            return
-        canvas = self._spec_canvas if isinstance(self._spec_canvas, tk.Canvas) else None
+        canvas = self._spec_canvas
         if canvas is None:
             return
         canvas.delete("all")
@@ -355,342 +620,6 @@ class MRSPanel(ttk.Frame):
             font=("TkDefaultFont", 11, "bold"),
         )
 
-    def _open_underlay_selector(self) -> None:
-        scan = getattr(self._app, "_scan", None)
-        scan_id = self._underlay_scan_id or getattr(scan, "scan_id", None)
-        reco_id = self._underlay_reco_id or getattr(self._app, "_current_reco_id", None)
-        UnderlaySelector(
-            self,
-            app=self._app,
-            on_select=self._on_underlay_selected,
-            selected_scan_id=scan_id,
-            selected_reco_id=reco_id,
-        )
-
-    def _on_underlay_selected(self, label: str, scan: Any, reco_id: int) -> None:
-        self._underlay_var.set(label)
-        self._set_underlay(scan, reco_id)
-
-    def _set_underlay(self, scan: Any, reco_id: int) -> None:
-        try:
-            dataobj = scan.get_dataobj(reco_id=reco_id)
-            affine_raw = scan.get_affine(reco_id=reco_id, space="raw")
-            affine_scanner = scan.get_affine(reco_id=reco_id, space="scanner")
-        except Exception as exc:
-            self._show_underlay_message(f"Underlay load failed:\n{exc}")
-            return
-        if dataobj is None or affine_raw is None:
-            self._show_underlay_message("Underlay data unavailable.")
-            return
-        if isinstance(dataobj, tuple):
-            dataobj = dataobj[0]
-        data = np.asarray(dataobj)
-        while data.ndim > 3:
-            data = data[..., 0]
-        if data.ndim < 3:
-            self._show_underlay_message("Underlay data is not 3D.")
-            return
-        self._underlay_scan_id = getattr(scan, "scan_id", None)
-        try:
-            self._underlay_reco_id = int(reco_id)
-        except Exception:
-            self._underlay_reco_id = None
-        if isinstance(affine_scanner, tuple):
-            affine_scanner = affine_scanner[0]
-        if affine_scanner is not None:
-            self._underlay_space_label = "scanner"
-            data, affine_display = self._orient_underlay(data, np.asarray(affine_scanner))
-        else:
-            self._underlay_space_label = "raw"
-            data, affine_display = self._orient_underlay(data, np.asarray(affine_raw))
-        self._underlay_data = data
-        self._underlay_affine = affine_display
-        self._underlay_affine_scanner = None
-        self._underlay_res = np.linalg.norm(self._underlay_affine[:3, :3], axis=0)
-        self._underlay_res_scanner = None
-        self._underlay_box = self._resolve_voxel_box()
-        self._update_underlay_slice_range()
-        self._schedule_underlay_refresh()
-        self._underlay_var.set(f"space: {self._underlay_space_label}")
-
-    def _clear_underlay(self) -> None:
-        self._underlay_data = None
-        self._underlay_affine = None
-        self._underlay_affine_scanner = None
-        self._underlay_res = None
-        self._underlay_res_scanner = None
-        self._underlay_box = None
-        self._underlay_scan_id = None
-        self._underlay_reco_id = None
-        self._underlay_var.set("Underlay: none")
-        if self._underlay_canvas is not None:
-            self._underlay_canvas.delete("all")
-        self._underlay_slice_label.set("Slice: -")
-
-    def _sync_underlay_with_viewer(self, scan: Any) -> None:
-        scan_id = getattr(scan, "scan_id", None)
-        if scan_id is None:
-            self._clear_underlay()
-            return
-        if scan_id != self._last_scan_id:
-            self._clear_underlay()
-            self._last_scan_id = scan_id
-        current_reco = getattr(self._app, "_current_reco_id", None)
-        if self._underlay_scan_id == scan_id and self._underlay_reco_id is not None:
-            return
-        if current_reco is None:
-            return
-        self._underlay_var.set(f"{scan_id:03d} :: {int(current_reco):03d} :: {self._underlay_space_label}")
-        self._set_underlay(scan, current_reco)
-
-    def _update_underlay_slice_range(self) -> None:
-        if self._underlay_data is None:
-            self._underlay_slice_var.set(0)
-            self._underlay_slice_label.set("Slice: -")
-            return
-        axis = self._plane_axis()
-        size = int(self._underlay_data.shape[axis])
-        current = int(self._underlay_slice_var.get() or 0)
-        if self._underlay_box is not None:
-            mins, maxs = self._underlay_box
-            center = int(round((mins[axis] + maxs[axis]) / 2))
-            current = center
-        if current < 0 or current >= size:
-            current = size // 2
-        if self._underlay_slice_scale is not None:
-            self._underlay_slice_scale.configure(from_=0, to=max(size - 1, 0))
-        self._underlay_slice_var.set(current)
-        self._underlay_slice_label.set(f"Slice: {current + 1}/{size}")
-
-    def _plane_axis(self) -> int:
-        plane = self._underlay_plane_var.get()
-        if plane == "xz":
-            return 1
-        if plane == "yz":
-            return 0
-        return 2
-
-    def _on_plane_change(self, *_: object) -> None:
-        self._update_underlay_slice_range()
-        self._schedule_underlay_refresh()
-
-    def _on_underlay_resize(self, _event: tk.Event) -> None:
-        self._schedule_underlay_refresh()
-
-    def _schedule_underlay_refresh(self) -> None:
-        if self._underlay_refresh_after is not None:
-            try:
-                self.after_cancel(self._underlay_refresh_after)
-            except Exception:
-                pass
-            self._underlay_refresh_after = None
-        self._underlay_refresh_after = self.after_idle(self._render_underlay)
-
-    def _show_underlay_message(self, message: str) -> None:
-        if self._underlay_canvas is None:
-            return
-        self._underlay_canvas.delete("all")
-        width = max(self._underlay_canvas.winfo_width(), 1)
-        height = max(self._underlay_canvas.winfo_height(), 1)
-        self._underlay_canvas.create_text(
-            width // 2,
-            height // 2,
-            anchor="center",
-            fill="#dddddd",
-            text=message,
-            font=("TkDefaultFont", 10, "bold"),
-        )
-
-    def _render_underlay(self) -> None:
-        self._underlay_refresh_after = None
-        if self._underlay_canvas is None:
-            return
-        if self._underlay_data is None:
-            self._show_underlay_message("Select an underlay scan.")
-            return
-        if not HAS_PIL:
-            self._show_underlay_message("Install pillow to view underlay.")
-            return
-        plane = self._underlay_plane_var.get()
-        slice_idx = int(self._underlay_slice_var.get())
-        data = self._underlay_data
-        if plane == "xz":
-            slice_idx = max(0, min(slice_idx, data.shape[1] - 1))
-            self._underlay_slice_var.set(slice_idx)
-            img = data[:, slice_idx, :].T
-            box = self._box_for_plane("xz", slice_idx)
-        elif plane == "yz":
-            slice_idx = max(0, min(slice_idx, data.shape[0] - 1))
-            self._underlay_slice_var.set(slice_idx)
-            img = data[slice_idx, :, :]
-            box = self._box_for_plane("yz", slice_idx)
-        else:
-            slice_idx = max(0, min(slice_idx, data.shape[2] - 1))
-            self._underlay_slice_var.set(slice_idx)
-            img = data[:, :, slice_idx].T
-            box = self._box_for_plane("xy", slice_idx)
-        if np.iscomplexobj(img):
-            img = np.abs(img)
-        img = img.astype(float, copy=False)
-        vmin, vmax = np.nanpercentile(img, (1, 99))
-        if np.isclose(vmin, vmax):
-            vmax = vmin + 1.0
-        img_norm = np.clip((img - vmin) / (vmax - vmin), 0.0, 1.0)
-        img_uint8 = (img_norm * 255).astype(np.uint8)
-        img_display = np.flipud(img_uint8)
-
-        pil_img = Image.fromarray(img_display, mode="L")
-        canvas_w = max(self._underlay_canvas.winfo_width(), 1)
-        canvas_h = max(self._underlay_canvas.winfo_height(), 1)
-        aspect = pil_img.width / max(pil_img.height, 1)
-        if self._underlay_res is not None:
-            if plane == "xz":
-                width_mm = img.shape[1] * float(self._underlay_res[0])
-                height_mm = img.shape[0] * float(self._underlay_res[2])
-            elif plane == "yz":
-                width_mm = img.shape[1] * float(self._underlay_res[2])
-                height_mm = img.shape[0] * float(self._underlay_res[1])
-            else:
-                width_mm = img.shape[1] * float(self._underlay_res[0])
-                height_mm = img.shape[0] * float(self._underlay_res[1])
-            if width_mm > 0 and height_mm > 0:
-                aspect = width_mm / height_mm
-        canvas_aspect = canvas_w / max(canvas_h, 1)
-        if canvas_aspect >= aspect:
-            target_h = canvas_h
-            target_w = max(int(target_h * aspect), 1)
-        else:
-            target_w = canvas_w
-            target_h = max(int(target_w / aspect), 1)
-
-        resampling = getattr(Image, "Resampling", Image)
-        resample = getattr(resampling, "NEAREST")
-        pil_img = pil_img.resize((target_w, target_h), resample)
-        self._underlay_image = ImageTk.PhotoImage(pil_img)
-        x = (canvas_w - target_w) // 2
-        y = (canvas_h - target_h) // 2
-        self._underlay_canvas.delete("all")
-        self._underlay_canvas.create_image(x, y, anchor="nw", image=self._underlay_image)
-        self._draw_underlay_box(box, img.shape, (x, y, target_w, target_h))
-
-        axis = self._plane_axis()
-        size = int(self._underlay_data.shape[axis])
-        self._underlay_slice_label.set(f"Slice: {slice_idx + 1}/{size}")
-
-    def _resolve_voxel_box(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        voxel_pos, voxel_size = self.get_voxel_info()
-        if voxel_pos is None or voxel_size is None or self._underlay_affine is None or self._underlay_res is None:
-            return None
-        pos = np.asarray(voxel_pos, dtype=float).reshape(-1)
-        size = np.asarray(voxel_size, dtype=float).reshape(-1)
-        if pos.size < 3 or size.size < 3:
-            return None
-
-        def _box_for_affine(affine: np.ndarray, res: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-            try:
-                inv_aff = np.linalg.inv(affine)
-                center = inv_aff @ np.array([pos[0], pos[1], pos[2], 1.0], dtype=float)
-                center_idx = center[:3]
-                half = (size[:3] / res[:3]) / 2.0
-                mins = np.floor(center_idx - half).astype(int)
-                maxs = np.ceil(center_idx + half).astype(int)
-                return mins, maxs
-            except Exception:
-                return None
-
-        def _box_for_index() -> Optional[Tuple[np.ndarray, np.ndarray]]:
-            if self._underlay_data is None:
-                return None
-            shape = np.asarray(self._underlay_data.shape[:3], dtype=float)
-            if np.all(pos[:3] >= 0) and np.all(pos[:3] < shape):
-                if np.all(size[:3] >= 0) and np.all(size[:3] <= shape):
-                    half = size[:3] / 2.0
-                    mins = np.floor(pos[:3] - half).astype(int)
-                    maxs = np.ceil(pos[:3] + half).astype(int)
-                    return mins, maxs
-            return None
-
-        index_box = _box_for_index()
-        if index_box is not None:
-            return index_box
-
-        if self._underlay_affine is None or self._underlay_res is None or self._underlay_data is None:
-            return None
-        box = _box_for_affine(self._underlay_affine, self._underlay_res)
-        if box is None:
-            return None
-        mins, maxs = box
-        shape = np.asarray(self._underlay_data.shape[:3])
-        if np.all(maxs >= 0) and np.all(mins < shape):
-            return box
-        return None
-
-    def _orient_underlay(self, data: np.ndarray, affine: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        try:
-            ornt = nib.orientations.io_orientation(affine)
-            target = np.array([[0, 1], [1, 1], [2, 1]])
-            transform = nib.orientations.ornt_transform(ornt, target)
-            data = nib.orientations.apply_orientation(data, transform)
-            affine = affine @ nib.orientations.inv_ornt_aff(transform, data.shape)
-            return data, affine
-        except Exception:
-            return data, affine
-
-    def _box_for_plane(self, plane: str, slice_idx: int) -> Optional[Tuple[int, int, int, int]]:
-        if self._underlay_box is None:
-            return None
-        mins, maxs = self._underlay_box
-        x0, y0, z0 = mins.tolist()
-        x1, y1, z1 = maxs.tolist()
-        if plane == "xy":
-            if slice_idx < z0 or slice_idx > z1:
-                return None
-            return y0, x0, y1, x1
-        if plane == "xz":
-            if slice_idx < y0 or slice_idx > y1:
-                return None
-            return z0, x0, z1, x1
-        if plane == "yz":
-            if slice_idx < x0 or slice_idx > x1:
-                return None
-            return y0, z0, y1, z1
-        return None
-
-    def _draw_underlay_box(
-        self,
-        box: Optional[Tuple[int, int, int, int]],
-        shape: Tuple[int, int],
-        layout: Tuple[int, int, int, int],
-    ) -> None:
-        if box is None or self._underlay_canvas is None:
-            return
-        row0, col0, row1, col1 = box
-        rows, cols = shape
-        row0 = max(0, min(row0, rows - 1))
-        row1 = max(0, min(row1, rows - 1))
-        col0 = max(0, min(col0, cols - 1))
-        col1 = max(0, min(col1, cols - 1))
-        row_min, row_max = sorted((row0, row1))
-        col_min, col_max = sorted((col0, col1))
-        x, y, target_w, target_h = layout
-        x0 = x + col_min * target_w / cols
-        x1 = x + (col_max + 1) * target_w / cols
-        disp_row_min = rows - 1 - row_max
-        disp_row_max = rows - 1 - row_min
-        y0 = y + disp_row_min * target_h / rows
-        y1 = y + (disp_row_max + 1) * target_h / rows
-        self._underlay_canvas.create_rectangle(
-            x0,
-            y0,
-            x1,
-            y1,
-            outline="#ff4444",
-            width=2,
-            dash=(3, 3),
-            fill="#ff4444",
-            stipple="gray50",
-        )
-
     def _schedule_plot_refresh(self) -> None:
         if self._plot_refresh_after is not None:
             try:
@@ -701,28 +630,88 @@ class MRSPanel(ttk.Frame):
         self._plot_refresh_after = self.after_idle(self._refresh_plot)
 
     def _on_canvas_resize(self, _event: tk.Event) -> None:
-        if HAS_MPL and self._spec_canvas is not None and self._spec_figure is not None:
-            widget = self._spec_canvas.get_tk_widget()
-            width = max(widget.winfo_width(), 1)
-            height = max(widget.winfo_height(), 1)
-            dpi = float(self._spec_figure.get_dpi() or 100.0)
-            widget.configure(width=width, height=height)
-            self._spec_figure.set_size_inches(width / dpi, height / dpi, forward=True)
-            try:
-                self._spec_canvas.draw()
-            except Exception:
-                pass
         if self._mrs_data is None:
             if self._last_message:
                 self._render_message(self._last_message)
             return
         self._schedule_plot_refresh()
 
+    def _format_tick(self, value: float) -> str:
+        abs_val = abs(value)
+        if abs_val >= 1000:
+            return f"{value:.0f}"
+        if abs_val >= 10:
+            return f"{value:.1f}"
+        if abs_val >= 1:
+            return f"{value:.2f}"
+        return f"{value:.3f}"
+
+    def _safe_float(self, value: Any, fallback: float) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return fallback
+
+    def _safe_var_float(self, var: tk.Variable, fallback: float) -> float:
+        try:
+            value = var.get()
+        except tk.TclError:
+            return fallback
+        return self._safe_float(value, fallback)
+
     def _add_tooltip(self, widget: tk.Widget, text: str) -> None:
         tip = _ToolTip(widget, text)
         self._tooltips.append(tip)
         widget.bind("<Enter>", tip.show, add="+")
         widget.bind("<Leave>", tip.hide, add="+")
+
+    def _add_range_control(
+        self,
+        parent: ttk.Frame,
+        *,
+        row: int,
+        label: str,
+        value_var: tk.DoubleVar,
+        min_var: tk.DoubleVar,
+        max_var: tk.DoubleVar,
+        tooltip: str,
+    ) -> None:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=(6, 0))
+        frame = ttk.Frame(parent)
+        frame.grid(row=row, column=1, sticky="ew", pady=(6, 0))
+        frame.columnconfigure(3, weight=1)
+
+        value_entry = ttk.Entry(frame, textvariable=value_var, width=8)
+        value_entry.grid(row=0, column=0, sticky="w")
+        min_entry = ttk.Entry(frame, textvariable=min_var, width=6)
+        min_entry.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        scale = ttk.Scale(frame, variable=value_var, orient=tk.HORIZONTAL)
+        scale.grid(row=0, column=2, columnspan=2, sticky="ew", padx=(6, 6))
+        max_entry = ttk.Entry(frame, textvariable=max_var, width=6)
+        max_entry.grid(row=0, column=4, sticky="e")
+
+        self._add_tooltip(value_entry, tooltip)
+        self._add_tooltip(min_entry, "Minimum value for slider range.")
+        self._add_tooltip(max_entry, "Maximum value for slider range.")
+
+        def _update_scale(*_args: object) -> None:
+            min_val = self._safe_var_float(min_var, 0.0)
+            max_val = self._safe_var_float(max_var, 0.0)
+            if max_val <= min_val:
+                max_val = min_val + 1.0
+                max_var.set(max_val)
+            scale.configure(from_=min_val, to=max_val)
+            current = self._safe_var_float(value_var, min_val)
+            if current < min_val:
+                value_var.set(min_val)
+            elif current > max_val:
+                value_var.set(max_val)
+
+        min_var.trace_add("write", _update_scale)
+        max_var.trace_add("write", _update_scale)
+        value_var.trace_add("write", lambda *_args: self._schedule_plot_refresh())
+        scale.configure(command=lambda _v: self._schedule_plot_refresh())
+        _update_scale()
 
     def _refresh_avg_dim_controls(self) -> None:
         if self._avg_dim_frame is None:
@@ -736,7 +725,7 @@ class MRSPanel(ttk.Frame):
         if data.ndim < 4:
             ttk.Label(self._avg_dim_frame, text="Average dims: n/a").grid(row=0, column=0, sticky="w")
             return
-        shape = data.reshape(data.shape[3:]).shape
+        shape = tuple(int(dim) for dim in data.reshape(data.shape[3:]).shape)
         order = self._mrs_order or tuple(f"dim{idx}" for idx in range(len(shape)))
         col = 0
         shown = False
@@ -761,140 +750,6 @@ class MRSPanel(ttk.Frame):
             ttk.Label(self._avg_dim_frame, text=f"Average dims: n/a (sizes: {summary})").grid(
                 row=0, column=0, sticky="w"
             )
-
-
-class UnderlaySelector(tk.Toplevel):
-    def __init__(
-        self,
-        parent: tk.Misc,
-        *,
-        app: Any,
-        on_select,
-        selected_scan_id: Optional[int] = None,
-        selected_reco_id: Optional[int] = None,
-    ) -> None:
-        super().__init__(parent)
-        self.title("Select Underlay")
-        self.geometry("520x360")
-        self.minsize(460, 320)
-        self._app = app
-        self._on_select = on_select
-        self._selected_scan_id = selected_scan_id
-        self._selected_reco_id = selected_reco_id
-        self._scan_ids: list[int] = []
-        self._scan_info: Dict[int, Dict[str, Any]] = {}
-        self._scan_list: Optional[tk.Listbox] = None
-        self._reco_list: Optional[tk.Listbox] = None
-        self._build_ui()
-        self._load_scans()
-
-    def _build_ui(self) -> None:
-        body = ttk.Frame(self, padding=(10, 10))
-        body.pack(fill="both", expand=True)
-        body.columnconfigure(0, weight=1)
-        body.columnconfigure(1, weight=1)
-        body.rowconfigure(1, weight=1)
-
-        ttk.Label(body, text="Scans").grid(row=0, column=0, sticky="w")
-        ttk.Label(body, text="Recos").grid(row=0, column=1, sticky="w")
-
-        scan_box = ttk.Frame(body)
-        scan_box.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
-        scan_box.columnconfigure(0, weight=1)
-        scan_box.rowconfigure(0, weight=1)
-        self._scan_list = tk.Listbox(scan_box, height=12, exportselection=False)
-        self._scan_list.grid(row=0, column=0, sticky="nsew")
-        self._scan_list.bind("<<ListboxSelect>>", lambda _e: self._on_scan_select())
-        scan_scroll = ttk.Scrollbar(scan_box, orient="vertical", command=self._scan_list.yview)
-        scan_scroll.grid(row=0, column=1, sticky="ns")
-        self._scan_list.configure(yscrollcommand=scan_scroll.set)
-
-        reco_box = ttk.Frame(body)
-        reco_box.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
-        reco_box.columnconfigure(0, weight=1)
-        reco_box.rowconfigure(0, weight=1)
-        self._reco_list = tk.Listbox(reco_box, height=12, exportselection=False)
-        self._reco_list.grid(row=0, column=0, sticky="nsew")
-        reco_scroll = ttk.Scrollbar(reco_box, orient="vertical", command=self._reco_list.yview)
-        reco_scroll.grid(row=0, column=1, sticky="ns")
-        self._reco_list.configure(yscrollcommand=reco_scroll.set)
-
-        btns = ttk.Frame(body)
-        btns.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        btns.columnconfigure(0, weight=1)
-        ttk.Button(btns, text="Select", command=self._select).grid(row=0, column=0, sticky="e")
-
-    def _load_scans(self) -> None:
-        study = getattr(self._app, "_study", None)
-        info_full = getattr(self._app, "_info_full", {}) or {}
-        scan_info_all = info_full.get("Scan(s)", {}) if isinstance(info_full, dict) else {}
-        if isinstance(scan_info_all, dict):
-            self._scan_info = scan_info_all
-        if study is None:
-            return
-        self._scan_ids = list(study.avail.keys())
-        if self._scan_list is None:
-            return
-        self._scan_list.delete(0, tk.END)
-        for scan_id in self._scan_ids:
-            info = self._scan_info.get(scan_id, {})
-            protocol = info.get("Protocol", "N/A")
-            self._scan_list.insert(tk.END, f"{scan_id:03d} :: {protocol}")
-        if self._scan_ids:
-            select_idx = 0
-            if self._selected_scan_id in self._scan_ids:
-                select_idx = self._scan_ids.index(self._selected_scan_id)
-            self._scan_list.selection_set(select_idx)
-            self._on_scan_select()
-
-    def _on_scan_select(self) -> None:
-        if self._scan_list is None or self._reco_list is None:
-            return
-        selection = self._scan_list.curselection()
-        if not selection:
-            return
-        scan_id = self._scan_ids[int(selection[0])]
-        info = self._scan_info.get(scan_id, {}) if isinstance(self._scan_info, dict) else {}
-        recos = info.get("Reco(s)", {}) if isinstance(info, dict) else {}
-        study = getattr(self._app, "_study", None)
-        scan = study.avail.get(scan_id) if study is not None else None
-        self._reco_list.delete(0, tk.END)
-        reco_ids = list(scan.avail.keys()) if scan is not None else []
-        for reco_id in reco_ids:
-            reco_info = recos.get(reco_id, {}) if isinstance(recos, dict) else {}
-            label = reco_info.get("Type", "N/A")
-            self._reco_list.insert(tk.END, f"{int(reco_id):03d} :: {label}")
-        if reco_ids:
-            select_idx = 0
-            if self._selected_reco_id in reco_ids:
-                select_idx = reco_ids.index(self._selected_reco_id)
-            self._reco_list.selection_set(select_idx)
-
-    def _select(self) -> None:
-        if self._scan_list is None or self._reco_list is None:
-            return
-        scan_sel = self._scan_list.curselection()
-        reco_sel = self._reco_list.curselection()
-        if not scan_sel:
-            return
-        if not reco_sel and self._reco_list.size() > 0:
-            reco_sel = (0,)
-            self._reco_list.selection_set(0)
-        if not reco_sel:
-            return
-        scan_id = self._scan_ids[int(scan_sel[0])]
-        reco_text = self._reco_list.get(reco_sel[0])
-        try:
-            reco_id = int(reco_text.split("::")[0].strip())
-        except Exception:
-            return
-        study = getattr(self._app, "_study", None)
-        if study is None:
-            return
-        scan = study.avail.get(scan_id)
-        label = f"{scan_id:03d} :: {reco_text}"
-        self._on_select(label, scan, reco_id)
-        self.destroy()
 
 
 class _ToolTip:

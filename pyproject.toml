@@ -14,11 +14,9 @@ authors = [
 ]
 dependencies = [
   "brkraw",
-  "matplotlib",
   "numpy",
   "nibabel",
   "nifti-mrs",
-  "pillow",
   "pyyaml",
   "jsonschema"
 ]
