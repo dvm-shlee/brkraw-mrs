@@ -406,7 +406,13 @@ def get_dataobj(self, reco_id: Optional[int] = None):
     return data
 
 
-def get_affine(self, reco_id: Optional[int] = None, *, decimals: Optional[int] = None):
+def get_affine(self, 
+               reco_id: Optional[int] = None, 
+               *, 
+               space: Optional[str] = None, 
+               override_subject_type: Optional[str] = None,
+               override_subject_pose: Optional[str] = None,
+               decimals: Optional[int] = None):
     _ = reco_id
     _ = decimals
     return np.eye(4, dtype=float)
