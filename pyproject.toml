@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "brkraw-mrs"
-version = "0.2.1"
+version = "0.2.2"
 description = "BrkRaw converter hook for Bruker PRESS SVS NIfTI-MRS outputs (ported from spec2nii)"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -17,6 +17,12 @@ dependencies = [
   "numpy",
   "nibabel",
   "nifti-mrs"
+]
+
+[project.optional-dependencies]
+dev = [
+  "packaging",
+  "tomli; python_version < '3.11'"
 ]
 
 [project.entry-points."brkraw.converter_hook"]
