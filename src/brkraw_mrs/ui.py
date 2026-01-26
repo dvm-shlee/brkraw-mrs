@@ -205,7 +205,7 @@ class MRSPanel(ttk.Frame):
         status.grid(row=2, column=0, sticky="ew", pady=(6, 0))
 
     def refresh_from_viewer(self) -> None:
-        scan = getattr(self._app, "_scan", None)
+        scan = self._resolve_scan_from_app()
         if scan is None:
             self._mrs_data = None
             self._mrs_order = None
@@ -225,6 +225,26 @@ class MRSPanel(ttk.Frame):
         self._mrs_meta = metadata
         self._refresh_avg_dim_controls()
         self._schedule_plot_refresh()
+
+    def _resolve_scan_from_app(self) -> Any:
+        # Legacy viewer: app exposes _scan directly.
+        scan = getattr(self._app, "_scan", None)
+        if scan is not None:
+            return scan
+        # New viewer: controller exposes dataset + state.
+        try:
+            state = getattr(self._app, "state", None)
+            dataset = getattr(self._app, "dataset", None)
+            selected = None
+            if state is not None:
+                selected = getattr(getattr(state, "dataset", None), "selected_scan_id", None)
+            if selected is not None and dataset is not None:
+                get_scan = getattr(dataset, "get_scan", None)
+                if callable(get_scan):
+                    return get_scan(int(selected))
+        except Exception:
+            return None
+        return None
 
     def _refresh_plot(self) -> None:
         self._plot_refresh_after = None
@@ -508,7 +528,7 @@ class MRSPanel(ttk.Frame):
             if sf_mhz is None or sf_mhz == 0.0:
                 return freq_hz, "Hz", False, "ppm axis unavailable (missing spectrometer frequency)."
             ref_ppm = self._get_meta_float("TxOffset") or 0.0
-            ppm = freq_hz / (sf_mhz * 1e6) + ref_ppm
+            ppm = (freq_hz / sf_mhz) + ref_ppm
             return ppm, "ppm", standard, None
         return freq_hz, "Hz", standard, None
 
