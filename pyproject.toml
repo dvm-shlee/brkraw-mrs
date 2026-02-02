@@ -7,20 +7,25 @@ name = "brkraw-mrs"
 version = "0.2.3"
 description = "BrkRaw converter hook for Bruker PRESS SVS NIfTI-MRS outputs (ported from spec2nii)"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
   {name = "BrkRaw contributors"}
 ]
 dependencies = [
   "brkraw",
-  "numpy",
-  "nibabel",
-  "nifti-mrs"
+  "numpy; python_version >= '3.9'",
+  "numpy<1.25; python_version < '3.9'",
+  "nibabel; python_version >= '3.9'",
+  "nibabel<4; python_version < '3.9'",
+  "nifti-mrs; python_version >= '3.10'",
+  "nifti-mrs<1.3.1; python_version < '3.10'"
 ]
 
 [project.optional-dependencies]
 dev = [
+  "tox",
+  "pytest",
   "packaging",
   "tomli; python_version < '3.11'"
 ]
@@ -44,3 +49,22 @@ brkraw_mrs = [
   "specs/*.yaml",
   "transforms/*.py",
 ]
+
+[tool.tox]
+env_list = ["py38", "py39", "py310", "py311"]
+
+[tool.tox.env_run_base]
+deps = ["pytest"]
+commands = [["pytest"]]
+
+[tool.tox.env.py38]
+basepython = ["/Users/shlee/.pyenv/versions/3.8.18/bin/python"]
+
+[tool.tox.env.py39]
+basepython = ["/Users/shlee/.pyenv/versions/3.9.19/bin/python"]
+
+[tool.tox.env.py310]
+basepython = ["/Users/shlee/.pyenv/versions/3.10.14/bin/python"]
+
+[tool.tox.env.py311]
+basepython = ["/Users/shlee/.pyenv/versions/3.11.8/bin/python"]
