@@ -23,3 +23,7 @@ site/
 .idea/
 .vscode/
 *.lock
+
+# Local AI agent guidance (not version controlled)
+AGENTS.md
+CLAUDE.md
