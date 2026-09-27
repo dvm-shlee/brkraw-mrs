@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from datetime import datetime
 from types import MethodType
-from typing import Any, Dict, Optional, Tuple, cast
+from typing import Any, Callable, Dict, Optional, Tuple, cast
 from importlib import resources
 
 import numpy as np
@@ -239,6 +240,31 @@ def _metadata_from_scan(scan: Any) -> Dict[str, Any]:
     return metadata
 
 
+def _call_supported(func: Callable[..., Any], **kwargs: Any) -> Any:
+    """Call ``func`` with only the keyword arguments it accepts.
+
+    brkraw 0.6.0 removed ``context_map`` from ``get_metadata``; 0.5.x still
+    has it. A keyword ``func`` does not take is dropped when it is ``None``
+    and is an error otherwise (like a direct call would be).
+    """
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return func(**kwargs)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return func(**kwargs)
+    kept = {}
+    rejected = []
+    for key, value in kwargs.items():
+        if key in params:
+            kept[key] = value
+        elif value is not None:
+            rejected.append(key)
+    if rejected:
+        raise TypeError("unsupported keyword argument(s): " + ", ".join(sorted(rejected)))
+    return func(**kept)
+
+
 def _cache_metadata(scan: Any, metadata: Dict[str, Any], reco_id: Optional[int]) -> None:
     cache = getattr(scan, "_mrs_metadata_cache", None)
     if not isinstance(cache, dict):
@@ -270,7 +296,9 @@ def _cache_metadata(scan: Any, metadata: Dict[str, Any], reco_id: Optional[int])
             and cache_key in cache
         ):
             return cache[cache_key]
-        return original_get_metadata(
+        # brkraw 0.6.0's get_metadata has no context_map (0.5.x has one)
+        return _call_supported(
+            original_get_metadata,
             reco_id=reco_id,
             spec=spec,
             context_map=context_map,
