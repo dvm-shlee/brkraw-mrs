@@ -13,7 +13,7 @@ authors = [
   {name = "BrkRaw contributors"}
 ]
 dependencies = [
-  "brkraw",
+  "brkraw>=0.6.1rc2,<0.7",
   "numpy; python_version >= '3.9'",
   "numpy<1.25; python_version < '3.9'",
   "nibabel; python_version >= '3.9'",
